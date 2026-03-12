@@ -1,0 +1,6 @@
+pyrogram
+pyromod
+TgCrypto
+Flask
+requests
+gunicorn
