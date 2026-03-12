@@ -1,0 +1,160 @@
+import os, re, asyncio, requests, time, math, sys
+from pyrogram import Client, filters, idle
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BotCommand
+from pyromod import listen
+from flask import Flask
+from threading import Thread
+
+# --- CONFIGURATION ---
+API_ID = 37197223
+API_HASH = "3a43ae287a696ee9a6a82fb79f605b75"
+BOT_TOKEN = "8416317246:AAF7M6ampaP5u0yOcjD-lWiXyMWsbTohpB4"
+ADMINS = [7426624114]
+START_PIC = "https://graph.org/file/bdcf6fa5362c2343ba8b3-af29186fa110399ca6.jpg"
+
+db_config = {"channel": None, "v_thumb": None, "m_thumb": None}
+
+app = Flask(__name__)
+@app.route('/')
+def home(): return "Raphael Master System Online!"
+def run_flask(): app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
+bot = Client("RaphaelMaster", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+
+# --- REUSABLE UI ---
+def get_main_btns():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📺 Set Channel", callback_data="set_chnl_btn"), 
+         InlineKeyboardButton("🖼️ Set Thumbs", callback_data="set_thumb_btn")],
+        [InlineKeyboardButton("👁️ View Thumbs", callback_data="view_thumbs_btn"),
+         InlineKeyboardButton("🗑️ Reset Thumbs", callback_data="dlt_thumb_btn")],
+        [InlineKeyboardButton("About Me", callback_data="about_btn"), 
+         InlineKeyboardButton("Support ↗", url="https://t.me/+Th2jHrC0YTY0NDg1")],
+        [InlineKeyboardButton("Updates ↗", url="https://t.me/+8WWAU1eJkyYxMjFl")]
+    ])
+
+BACK_BTN = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="back_start")]])
+
+# --- SYSTEM 1: PROGRESS BAR ---
+async def progress_bar(current, total, ud_type, message, start):
+    now = time.time()
+    diff = now - start
+    if round(diff % 10.00) == 0 or current == total:
+        percentage = current * 100 / total
+        speed = current / diff if diff > 0 else 0
+        progress = "[{0}{1}]".format(''.join(["▰" for i in range(math.floor(percentage / 10))]), ''.join(["▱" for i in range(10 - math.floor(percentage / 10))]))
+        tmp = f"**{ud_type} Mode**\n{progress} {round(percentage, 2)}%\n🚀 Speed: {round(speed / 1024, 2)} KB/s"
+        try: await message.edit(text=tmp)
+        except: pass
+
+# --- SYSTEM 2: HANDLERS & CALLBACKS ---
+@bot.on_message(filters.command("start") & filters.private)
+async def start(c, m):
+    await m.reply_photo(photo=START_PIC, caption="Hello Rimiru, I am Raphael 🦋\nFull 188-Line Master System Active.", reply_markup=get_main_btns())
+
+@bot.on_message(filters.private & (filters.video | filters.document))
+async def batch_init(c, m):
+    if not db_config["channel"]:
+        return await m.reply_text("❌ Pehle `/setchnl` karein.")
+    btns = [[InlineKeyboardButton("🎬 VIDEO", callback_data=f"type_v_{m.id}"), InlineKeyboardButton("📚 MANGA", callback_data=f"type_m_{m.id}")]]
+    await m.reply_text("⚡ Select type for this file, Rimiru:", reply_markup=InlineKeyboardMarkup(btns))
+
+@bot.on_callback_query()
+async def cb_handler(c, cb):
+    if cb.data == "back_start":
+        await cb.message.edit_caption(caption="Hello Rimiru, I am Raphael 🦋", reply_markup=get_main_btns())
+    elif cb.data == "view_thumbs_btn":
+        if db_config["v_thumb"]: await cb.message.reply_photo(db_config["v_thumb"], caption="🎬 Video Thumb")
+        if db_config["m_thumb"]: await cb.message.reply_photo(db_config["m_thumb"], caption="📚 Manga Thumb")
+    elif cb.data == "dlt_thumb_btn":
+        db_config["v_thumb"] = db_config["m_thumb"] = None
+        await cb.answer("🗑️ Thumbnails Deleted!", show_alert=True)
+    elif cb.data == "set_chnl_btn":
+        await cb.message.edit_text("📝 Send Channel ID:", reply_markup=BACK_BTN)
+        r = await c.listen(cb.message.chat.id)
+        db_config["channel"] = int(r.text); await r.reply_text("✅ Linked!")
+    elif cb.data == "set_thumb_btn":
+        btns = [[InlineKeyboardButton("🎬 VIDEO", callback_data="st_v"), InlineKeyboardButton("📚 MANGA", callback_data="st_m")]]
+        await cb.message.edit_text("Choose type:", reply_markup=InlineKeyboardMarkup(btns))
+    elif cb.data.startswith("st_"):
+        mode = "v_thumb" if "v" in cb.data else "m_thumb"
+        await cb.message.edit_text("🖼️ Send Photo.")
+        photo_msg = await c.listen(cb.message.chat.id)
+        if photo_msg.photo: db_config[mode] = photo_msg.photo.file_id; await photo_msg.reply_text("✅ Saved!")
+    elif "type_" in cb.data:
+        f_type = "video" if "type_v_" in cb.data else "manga"
+        msg_id = int(cb.data.split("_")[-1])
+        await cb.message.edit_text(f"📝 Enter Full {f_type.upper()} Name:")
+        name_reply = await c.listen(cb.message.chat.id)
+        m = await c.get_messages(cb.message.chat.id, msg_id)
+        await process_file(c, m, f_type, name_reply.text.strip())
+
+# --- SYSTEM 3: MASTER PROCESSING (DURATION FIX + CAPTION LOGIC) ---
+async def process_file(c, m, f_type, user_name):
+    file = m.video or m.document
+    ext = os.path.splitext(file.file_name)[1]
+    clean_name = user_name.replace(ext, "")
+    
+    if f_type == "video":
+        final_name = f"{clean_name} [@TEMPEST_MAIN] [@ANIME_SUPPLIER_X]{ext}"
+        thumb_id = db_config["v_thumb"]
+        final_caption = f"**{final_name}**"
+    else:
+        final_name = f"{clean_name} [@TEMPEST_MAIN]{ext}"
+        thumb_id = db_config["m_thumb"]
+        final_caption = None
+
+    sts = await m.reply_text("📥 **Extracting Duration & Downloading...**")
+    try:
+        path = await m.download(file_name=final_name, progress=progress_bar, progress_args=("Downloading", sts, time.time()))
+        
+        # 🛠️ Duration Fix using Hachoir
+        duration = 0
+        try:
+            from hachoir.metadata import extractMetadata
+            from hachoir.parser import createParser
+            metadata = extractMetadata(createParser(path))
+            if metadata and metadata.has("duration"):
+                duration = metadata.get("duration").seconds
+        except: duration = getattr(file, "duration", 0)
+
+        local_thumb = await c.download_media(thumb_id, file_name=f"thumb_{m.id}.jpg") if thumb_id else None
+
+        await sts.edit("📤 **Uploading with Metadata...**")
+        if f_type == "video":
+            await c.send_video(
+                db_config["channel"], video=path, thumb=local_thumb, 
+                caption=final_caption, file_name=final_name, 
+                duration=duration, supports_streaming=True
+            )
+        else:
+            await c.send_document(
+                db_config["channel"], document=path, thumb=local_thumb, 
+                caption=final_caption, file_name=final_name
+            )
+        
+        if os.path.exists(path): os.remove(path)
+        if local_thumb: os.remove(local_thumb)
+        await sts.edit("✅ Mission Completed, Rimiru!", reply_markup=get_main_btns())
+    except Exception as e: await m.reply_text(f"❌ Error: {e}")
+
+# --- ADMIN COMMANDS ---
+@bot.on_message(filters.command("setchnl") & filters.user(ADMINS))
+async def set_chnl(c, m):
+    try: db_config["channel"] = int(m.command[1]); await m.reply_text("✅ Channel Set!")
+    except: await m.reply_text("Use: `/setchnl -100xxxx`")
+
+@bot.on_message(filters.command("dltethumb") & filters.user(ADMINS))
+async def dlt_thumb_cmd(c, m):
+    db_config["v_thumb"] = db_config["m_thumb"] = None
+    await m.reply_text("🗑️ All Thumbnails deleted!")
+
+@bot.on_message(filters.command("restart") & filters.user(ADMINS))
+async def restart_bot(c, m):
+    await m.reply_text("🔄 Rebooting..."); os.execl(sys.executable, sys.executable, *sys.argv)
+
+if __name__ == "__main__":
+    Thread(target=run_flask, daemon=True).start()
+    bot.start()
+    print("Raphael Full Master System Online, Rimiru! 🦋")
+    idle()
