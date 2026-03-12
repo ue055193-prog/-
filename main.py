@@ -6,9 +6,9 @@ from flask import Flask
 from threading import Thread
 
 # --- CONFIGURATION ---
-API_ID = 37197223
-API_HASH = "3a43ae287a696ee9a6a82fb79f605b75"
-BOT_TOKEN = "8416317246:AAF7M6ampaP5u0yOcjD-lWiXyMWsbTohpB4"
+API_ID = 33194523
+API_HASH = "af9f7980aca75bd51e0e36b94f9758fd"
+BOT_TOKEN = "8726598869:AAF-8XIeaGTGD5-U9Gx6CAgtB7rwlKd1Oj4"
 ADMINS = [7426624114]
 START_PIC = "https://graph.org/file/bdcf6fa5362c2343ba8b3-af29186fa110399ca6.jpg"
 
