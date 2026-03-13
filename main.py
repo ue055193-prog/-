@@ -8,7 +8,7 @@ from threading import Thread
 # --- CONFIGURATION ---
 API_ID = 33194523
 API_HASH = "af9f7980aca75bd51e0e36b94f9758fd"
-BOT_TOKEN = "8726598869:AAF-8XIeaGTGD5-U9Gx6CAgtB7rwlKd1Oj4"
+BOT_TOKEN = "8726598869:AAF-8XIeaGTGD5-U9Gx6CAgtB7rwlKd1Oj4
 ADMINS = [7426624114]
 START_PIC = "https://graph.org/file/bdcf6fa5362c2343ba8b3-af29186fa110399ca6.jpg"
 
@@ -50,12 +50,12 @@ async def progress_bar(current, total, ud_type, message, start):
 # --- SYSTEM 2: HANDLERS & CALLBACKS ---
 @bot.on_message(filters.command("start") & filters.private)
 async def start(c, m):
-    await m.reply_photo(photo=START_PIC, caption="Hello Rimiru, I am Raphael 🦋\nFull 188-Line Master System Active.", reply_markup=get_main_btns())
+    await m.reply_photo(photo=START_PIC, caption="Hello Rimiru, I am Raphael 🦋\nOriginal system restored with silent fixes.", reply_markup=get_main_btns())
 
 @bot.on_message(filters.private & (filters.video | filters.document))
 async def batch_init(c, m):
     if not db_config["channel"]:
-        return await m.reply_text("❌ Pehle `/setchnl` karein.")
+        return await m.reply_text("❌ Pehle `/setchnl` ya menu se channel set karein.")
     btns = [[InlineKeyboardButton("🎬 VIDEO", callback_data=f"type_v_{m.id}"), InlineKeyboardButton("📚 MANGA", callback_data=f"type_m_{m.id}")]]
     await m.reply_text("⚡ Select type for this file, Rimiru:", reply_markup=InlineKeyboardMarkup(btns))
 
@@ -89,10 +89,14 @@ async def cb_handler(c, cb):
         m = await c.get_messages(cb.message.chat.id, msg_id)
         await process_file(c, m, f_type, name_reply.text.strip())
 
-# --- SYSTEM 3: MASTER PROCESSING (DURATION FIX + CAPTION LOGIC) ---
+# --- SYSTEM 3: MASTER PROCESSING (ORIGINAL STYLE) ---
 async def process_file(c, m, f_type, user_name):
     file = m.video or m.document
-    ext = os.path.splitext(file.file_name)[1]
+    
+    # 🛠️ Fix: Ensure filename is never None
+    orig_name = getattr(file, "file_name", "") or "file"
+    ext = "." + orig_name.split(".")[-1] if "." in orig_name else (".mp4" if f_type == "video" else ".pdf")
+    
     clean_name = user_name.replace(ext, "")
     
     if f_type == "video":
@@ -104,20 +108,12 @@ async def process_file(c, m, f_type, user_name):
         thumb_id = db_config["m_thumb"]
         final_caption = None
 
-    sts = await m.reply_text("📥 **Extracting Duration & Downloading...**")
+    sts = await m.reply_text("📥 **Extracting Attributes & Downloading...**")
     try:
         path = await m.download(file_name=final_name, progress=progress_bar, progress_args=("Downloading", sts, time.time()))
         
-        # 🛠️ Duration Fix using Hachoir
-        duration = 0
-        try:
-            from hachoir.metadata import extractMetadata
-            from hachoir.parser import createParser
-            metadata = extractMetadata(createParser(path))
-            if metadata and metadata.has("duration"):
-                duration = metadata.get("duration").seconds
-        except: duration = getattr(file, "duration", 0)
-
+        # 🛠️ Fix: Copy Duration from original file (No 0:00)
+        duration = getattr(file, "duration", 0)
         local_thumb = await c.download_media(thumb_id, file_name=f"thumb_{m.id}.jpg") if thumb_id else None
 
         await sts.edit("📤 **Uploading with Metadata...**")
@@ -139,16 +135,6 @@ async def process_file(c, m, f_type, user_name):
     except Exception as e: await m.reply_text(f"❌ Error: {e}")
 
 # --- ADMIN COMMANDS ---
-@bot.on_message(filters.command("setchnl") & filters.user(ADMINS))
-async def set_chnl(c, m):
-    try: db_config["channel"] = int(m.command[1]); await m.reply_text("✅ Channel Set!")
-    except: await m.reply_text("Use: `/setchnl -100xxxx`")
-
-@bot.on_message(filters.command("dltethumb") & filters.user(ADMINS))
-async def dlt_thumb_cmd(c, m):
-    db_config["v_thumb"] = db_config["m_thumb"] = None
-    await m.reply_text("🗑️ All Thumbnails deleted!")
-
 @bot.on_message(filters.command("restart") & filters.user(ADMINS))
 async def restart_bot(c, m):
     await m.reply_text("🔄 Rebooting..."); os.execl(sys.executable, sys.executable, *sys.argv)
@@ -156,5 +142,5 @@ async def restart_bot(c, m):
 if __name__ == "__main__":
     Thread(target=run_flask, daemon=True).start()
     bot.start()
-    print("Raphael Full Master System Online, Rimiru! 🦋")
+    print("Raphael Master Original Online, Rimiru! 🦋")
     idle()
