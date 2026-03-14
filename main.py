@@ -19,7 +19,14 @@ app = Flask(__name__)
 def home(): return "Raphael Master System Online!"
 def run_flask(): app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
 
-bot = Client("RaphaelMaster", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+# 🛠️ CONNECTION FIX: Added sleep_threshold to handle slow network/floodwaits
+bot = Client(
+    "RaphaelMaster", 
+    api_id=API_ID, 
+    api_hash=API_HASH, 
+    bot_token=BOT_TOKEN,
+    sleep_threshold=60  # Slow connection pe bot 60s wait karega
+)
 
 # --- REUSABLE UI ---
 def get_main_btns():
@@ -50,7 +57,7 @@ async def progress_bar(current, total, ud_type, message, start):
 # --- SYSTEM 2: HANDLERS & CALLBACKS ---
 @bot.on_message(filters.command("start") & filters.private)
 async def start(c, m):
-    await m.reply_photo(photo=START_PIC, caption="Hello Rimiru, I am Raphael 🦋\nOriginal system restored with silent fixes.", reply_markup=get_main_btns())
+    await m.reply_photo(photo=START_PIC, caption="Hello Rimiru, I am Raphael 🦋\nConnection timeout fixes are now active.", reply_markup=get_main_btns())
 
 @bot.on_message(filters.private & (filters.video | filters.document))
 async def batch_init(c, m):
@@ -89,14 +96,11 @@ async def cb_handler(c, cb):
         m = await c.get_messages(cb.message.chat.id, msg_id)
         await process_file(c, m, f_type, name_reply.text.strip())
 
-# --- SYSTEM 3: MASTER PROCESSING (ORIGINAL STYLE) ---
+# --- SYSTEM 3: MASTER PROCESSING ---
 async def process_file(c, m, f_type, user_name):
     file = m.video or m.document
-    
-    # 🛠️ Fix: Ensure filename is never None
     orig_name = getattr(file, "file_name", "") or "file"
     ext = "." + orig_name.split(".")[-1] if "." in orig_name else (".mp4" if f_type == "video" else ".pdf")
-    
     clean_name = user_name.replace(ext, "")
     
     if f_type == "video":
@@ -108,11 +112,14 @@ async def process_file(c, m, f_type, user_name):
         thumb_id = db_config["m_thumb"]
         final_caption = None
 
-    sts = await m.reply_text("📥 **Extracting Attributes & Downloading...**")
+    sts = await m.reply_text("📥 **Handling Meta & Downloading...**")
     try:
-        path = await m.download(file_name=final_name, progress=progress_bar, progress_args=("Downloading", sts, time.time()))
+        # 🛠️ Added asyncio timeout for handling large file downloads
+        path = await asyncio.wait_for(
+            m.download(file_name=final_name, progress=progress_bar, progress_args=("Downloading", sts, time.time())),
+            timeout=900 # 15 minutes max
+        )
         
-        # 🛠️ Fix: Copy Duration from original file (No 0:00)
         duration = getattr(file, "duration", 0)
         local_thumb = await c.download_media(thumb_id, file_name=f"thumb_{m.id}.jpg") if thumb_id else None
 
@@ -132,6 +139,8 @@ async def process_file(c, m, f_type, user_name):
         if os.path.exists(path): os.remove(path)
         if local_thumb: os.remove(local_thumb)
         await sts.edit("✅ Mission Completed, Rimiru!", reply_markup=get_main_btns())
+    except asyncio.TimeoutError:
+        await sts.edit("❌ Error: Download Timed Out. Please try again.")
     except Exception as e: await m.reply_text(f"❌ Error: {e}")
 
 # --- ADMIN COMMANDS ---
@@ -142,5 +151,5 @@ async def restart_bot(c, m):
 if __name__ == "__main__":
     Thread(target=run_flask, daemon=True).start()
     bot.start()
-    print("Raphael Master Original Online, Rimiru! 🦋")
+    print("Raphael Master System Online, Rimiru! 🦋")
     idle()
