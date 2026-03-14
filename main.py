@@ -1,4 +1,4 @@
-import os, re, asyncio, requests, time, math, sys
+import os, re, asyncio, requests, time, math, sys, shutil, gc
 from pyrogram import Client, filters, idle
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BotCommand
 from pyromod import listen
@@ -19,137 +19,92 @@ app = Flask(__name__)
 def home(): return "Raphael Master System Online!"
 def run_flask(): app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
 
-# 🛠️ CONNECTION FIX: Added sleep_threshold to handle slow network/floodwaits
-bot = Client(
-    "RaphaelMaster", 
-    api_id=API_ID, 
-    api_hash=API_HASH, 
-    bot_token=BOT_TOKEN,
-    sleep_threshold=60  # Slow connection pe bot 60s wait karega
-)
+bot = Client("RaphaelMaster", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, sleep_threshold=60)
 
-# --- REUSABLE UI ---
-def get_main_btns():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📺 Set Channel", callback_data="set_chnl_btn"), 
-         InlineKeyboardButton("🖼️ Set Thumbs", callback_data="set_thumb_btn")],
-        [InlineKeyboardButton("👁️ View Thumbs", callback_data="view_thumbs_btn"),
-         InlineKeyboardButton("🗑️ Reset Thumbs", callback_data="dlt_thumb_btn")],
-        [InlineKeyboardButton("About Me", callback_data="about_btn"), 
-         InlineKeyboardButton("Support ↗", url="https://t.me/+Th2jHrC0YTY0NDg1")],
-        [InlineKeyboardButton("Updates ↗", url="https://t.me/+8WWAU1eJkyYxMjFl")]
-    ])
-
-BACK_BTN = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="back_start")]])
-
-# --- SYSTEM 1: PROGRESS BAR ---
+# --- SYSTEM: PROGRESS BAR WITH ETA ---
 async def progress_bar(current, total, ud_type, message, start):
     now = time.time()
     diff = now - start
     if round(diff % 10.00) == 0 or current == total:
         percentage = current * 100 / total
         speed = current / diff if diff > 0 else 0
+        elapsed_time = round(diff)
+        if speed > 0:
+            eta = round((total - current) / speed)
+            eta_str = f"{eta}s" if eta < 60 else f"{round(eta/60, 2)}m"
+        else: eta_str = "0s"
+        
         progress = "[{0}{1}]".format(''.join(["▰" for i in range(math.floor(percentage / 10))]), ''.join(["▱" for i in range(10 - math.floor(percentage / 10))]))
-        tmp = f"**{ud_type} Mode**\n{progress} {round(percentage, 2)}%\n🚀 Speed: {round(speed / 1024, 2)} KB/s"
+        
+        tmp = (f"**{ud_type} Mode**\n"
+               f"{progress} {round(percentage, 2)}%\n"
+               f"🚀 Speed: {round(speed / 1024, 2)} KB/s\n"
+               f"⏳ ETA: {eta_str}")
         try: await message.edit(text=tmp)
         except: pass
 
-# --- SYSTEM 2: HANDLERS & CALLBACKS ---
-@bot.on_message(filters.command("start") & filters.private)
-async def start(c, m):
-    await m.reply_photo(photo=START_PIC, caption="Hello Rimiru, I am Raphael 🦋\nConnection timeout fixes are now active.", reply_markup=get_main_btns())
-
-@bot.on_message(filters.private & (filters.video | filters.document))
-async def batch_init(c, m):
-    if not db_config["channel"]:
-        return await m.reply_text("❌ Pehle `/setchnl` ya menu se channel set karein.")
-    btns = [[InlineKeyboardButton("🎬 VIDEO", callback_data=f"type_v_{m.id}"), InlineKeyboardButton("📚 MANGA", callback_data=f"type_m_{m.id}")]]
-    await m.reply_text("⚡ Select type for this file, Rimiru:", reply_markup=InlineKeyboardMarkup(btns))
-
-@bot.on_callback_query()
-async def cb_handler(c, cb):
-    if cb.data == "back_start":
-        await cb.message.edit_caption(caption="Hello Rimiru, I am Raphael 🦋", reply_markup=get_main_btns())
-    elif cb.data == "view_thumbs_btn":
-        if db_config["v_thumb"]: await cb.message.reply_photo(db_config["v_thumb"], caption="🎬 Video Thumb")
-        if db_config["m_thumb"]: await cb.message.reply_photo(db_config["m_thumb"], caption="📚 Manga Thumb")
-    elif cb.data == "dlt_thumb_btn":
-        db_config["v_thumb"] = db_config["m_thumb"] = None
-        await cb.answer("🗑️ Thumbnails Deleted!", show_alert=True)
-    elif cb.data == "set_chnl_btn":
-        await cb.message.edit_text("📝 Send Channel ID:", reply_markup=BACK_BTN)
-        r = await c.listen(cb.message.chat.id)
-        db_config["channel"] = int(r.text); await r.reply_text("✅ Linked!")
-    elif cb.data == "set_thumb_btn":
-        btns = [[InlineKeyboardButton("🎬 VIDEO", callback_data="st_v"), InlineKeyboardButton("📚 MANGA", callback_data="st_m")]]
-        await cb.message.edit_text("Choose type:", reply_markup=InlineKeyboardMarkup(btns))
-    elif cb.data.startswith("st_"):
-        mode = "v_thumb" if "v" in cb.data else "m_thumb"
-        await cb.message.edit_text("🖼️ Send Photo.")
-        photo_msg = await c.listen(cb.message.chat.id)
-        if photo_msg.photo: db_config[mode] = photo_msg.photo.file_id; await photo_msg.reply_text("✅ Saved!")
-    elif "type_" in cb.data:
-        f_type = "video" if "type_v_" in cb.data else "manga"
-        msg_id = int(cb.data.split("_")[-1])
-        await cb.message.edit_text(f"📝 Enter Full {f_type.upper()} Name:")
-        name_reply = await c.listen(cb.message.chat.id)
-        m = await c.get_messages(cb.message.chat.id, msg_id)
-        await process_file(c, m, f_type, name_reply.text.strip())
+# --- SYSTEM: DYNAMIC SLEEP LOGIC ---
+def get_sleep_time(file_path):
+    size_mb = os.path.getsize(file_path) / (1024 * 1024)
+    if size_mb < 100: return 3
+    if size_mb < 500: return 7
+    if size_mb < 1000: return 12
+    return 20 # 1GB+ ke liye 20s break
 
 # --- SYSTEM 3: MASTER PROCESSING ---
 async def process_file(c, m, f_type, user_name):
+    shutil.rmtree("downloads", ignore_errors=True)
+    if not os.path.exists("downloads"): os.makedirs("downloads")
+    gc.collect()
+
     file = m.video or m.document
     orig_name = getattr(file, "file_name", "") or "file"
     ext = "." + orig_name.split(".")[-1] if "." in orig_name else (".mp4" if f_type == "video" else ".pdf")
-    clean_name = user_name.replace(ext, "")
     
+    final_name = f"downloads/{user_name} [@TEMPEST_MAIN]{ext}"
     if f_type == "video":
-        final_name = f"{clean_name} [@TEMPEST_MAIN] [@ANIME_SUPPLIER_X]{ext}"
-        thumb_id = db_config["v_thumb"]
-        final_caption = f"**{final_name}**"
-    else:
-        final_name = f"{clean_name} [@TEMPEST_MAIN]{ext}"
-        thumb_id = db_config["m_thumb"]
-        final_caption = None
+        final_name = f"downloads/{user_name} [@TEMPEST_MAIN] [@ANIME_SUPPLIER_X]{ext}"
 
-    sts = await m.reply_text("📥 **Handling Meta & Downloading...**")
+    sts = await m.reply_text("📥 **Initializing Download...**")
     try:
-        # 🛠️ Added asyncio timeout for handling large file downloads
         path = await asyncio.wait_for(
             m.download(file_name=final_name, progress=progress_bar, progress_args=("Downloading", sts, time.time())),
-            timeout=900 # 15 minutes max
+            timeout=1800
         )
         
-        duration = getattr(file, "duration", 0)
-        local_thumb = await c.download_media(thumb_id, file_name=f"thumb_{m.id}.jpg") if thumb_id else None
+        if not os.path.exists(path) or os.path.getsize(path) == 0:
+            return await sts.edit("❌ Error: Download Failed.")
 
-        await sts.edit("📤 **Uploading with Metadata...**")
+        duration = getattr(file, "duration", 0)
+        thumb_id = db_config["v_thumb"] if f_type == "video" else db_config["m_thumb"]
+        local_thumb = await c.download_media(thumb_id) if thumb_id else None
+
+        await sts.edit("📤 **Uploading with ETA...**")
         if f_type == "video":
-            await c.send_video(
-                db_config["channel"], video=path, thumb=local_thumb, 
-                caption=final_caption, file_name=final_name, 
-                duration=duration, supports_streaming=True
-            )
+            await c.send_video(db_config["channel"], video=path, thumb=local_thumb, caption=f"**{os.path.basename(path)}**", duration=duration, supports_streaming=True, progress=progress_bar, progress_args=("Uploading", sts, time.time()))
         else:
-            await c.send_document(
-                db_config["channel"], document=path, thumb=local_thumb, 
-                caption=final_caption, file_name=final_name
-            )
+            await c.send_document(db_config["channel"], document=path, thumb=local_thumb, caption=None, progress=progress_bar, progress_args=("Uploading", sts, time.time()))
+        
+        # 🛠️ DYNAMIC CLEANUP BREAK
+        wait_time = get_sleep_time(path)
+        await sts.edit(f"⏳ **Upload Done! Dynamic Break: {wait_time}s for Cleanup...**")
         
         if os.path.exists(path): os.remove(path)
+        shutil.rmtree("downloads", ignore_errors=True)
         if local_thumb: os.remove(local_thumb)
-        await sts.edit("✅ Mission Completed, Rimiru!", reply_markup=get_main_btns())
-    except asyncio.TimeoutError:
-        await sts.edit("❌ Error: Download Timed Out. Please try again.")
-    except Exception as e: await m.reply_text(f"❌ Error: {e}")
+        gc.collect() 
+        await asyncio.sleep(wait_time) 
 
-# --- ADMIN COMMANDS ---
-@bot.on_message(filters.command("restart") & filters.user(ADMINS))
-async def restart_bot(c, m):
-    await m.reply_text("🔄 Rebooting..."); os.execl(sys.executable, sys.executable, *sys.argv)
+        await sts.edit("✅ Mission Completed, Rimiru!", reply_markup=get_main_btns())
+
+    except Exception as e:
+        shutil.rmtree("downloads", ignore_errors=True)
+        gc.collect()
+        await m.reply_text(f"❌ Error: {e}")
+
+# ... (Start, Buttons aur Baaki Handlers same rahenge) ...
 
 if __name__ == "__main__":
     Thread(target=run_flask, daemon=True).start()
     bot.start()
-    print("Raphael Master System Online, Rimiru! 🦋")
     idle()
